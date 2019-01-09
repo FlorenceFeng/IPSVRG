@@ -2,12 +2,12 @@
 %% Project name: Inexact Preconditioning on Prox-SVRG and Katyusha 
 %% Coded by:     Fei Feng 
 %% Last update:  01/07/2019
-%% Content:      test example -- Lasso
-%% Details:      min_x (1/2n)*\|Ax-b\|^2+\lambda \|x\|_1
+%% Content:      test example -- L1 logistic
+%% Details:      min_x (1/n) \sum log(1+exp(-bi*ai^Tx))+\lambda \|x\|_1
 
-classdef lasso
+classdef logistic
    properties
-      data      % including A and b
+      data      % including A,b
       params    % hyperparameters
       n         % number of data
       p         % dimension of x
@@ -17,7 +17,7 @@ classdef lasso
    end
    
    methods
-      function prob = lasso(data, params)
+      function prob = logistic(data, params)
           prob.data = data;
           prob.params = params;
           [prob.n, prob.p] = size(data.A);
@@ -31,26 +31,34 @@ classdef lasso
       function g = grad(prob, x, batch_size)
           % full gradient
           if(batch_size == prob.n)
-              g = prob.data.A'*(prob.data.A*x-prob.data.b)/prob.n + prob.params.RIDGE*x;
+              temp = exp(prob.data.A*x.*(-prob.data.b));
+              g = prob.data.A'*(temp.*(-prob.data.b)./(1+temp))/batch_size + prob.params.RIDGE*x;
           % mini-batched gradient
           else
               y = randsample(prob.n, batch_size);
               sub_A(:,:)=prob.data.A(y,:);
               sub_b(:) = prob.data.b(y);
               sub_b = sub_b';
-              g = sub_A'*(sub_A*x-sub_b)/batch_size + prob.params.RIDGE*x;
+              temp = exp(sub_A*x.*(-sub_b));
+              g = sub_A'*(temp.*(-sub_b)./(1+temp))/batch_size + prob.params.RIDGE*x;
           end
       end
       
       % compute gradient difference 
       function g = scGradDiff(prob, w, x, batch_size)
           if(batch_size == prob.n)
-              g = prob.data.A'*(prob.data.A*(w-x))/batch_size+prob.params.RIDGE*(w-x);
+              temp1 = exp(prob.data.A*w.*(-prob.data.b));
+              temp2 = exp(prob.data.A*x.*(-prob.data.b));
+              g = prob.data.A'*(temp1.*(-prob.data.b)./(1+temp1)-temp2.*(-prob.data.b)./(1+temp2))/batch_size + prob.params.RIDGE*(w-x);
           else
               % randomly select #batch_size numbers from [n]
               y = randsample(prob.n,batch_size);
               sub_A(:,:)=prob.data.A(y,:);
-              g = sub_A'*(sub_A*(w-x))/batch_size+prob.params.RIDGE*(w-x);
+              sub_b(:) = prob.data.b(y);
+              sub_b = sub_b';
+              temp1 = exp(sub_A*w.*(-sub_b));
+              temp2 = exp(sub_A*x.*(-sub_b));
+              g = sub_A'*(temp1.*(-sub_b)./(1+temp1)-temp2.*(-sub_b)./(1+temp2))/batch_size + prob.params.RIDGE*(w-x);
           end
       end
       
@@ -97,7 +105,6 @@ classdef lasso
           else
               if(prob.params.BUILD==0)
                   fprintf('use FISTA with params.BUILD=1');
-                  exit;
               elseif(prob.params.M_BLOCK_SIZE>1)
                   t_old = 1;
                   x_old = w;
@@ -110,8 +117,8 @@ classdef lasso
                       t_old = t_new;
                   end
               else
-                  temp = w - tilde_g./prob.diag_M;
-                  y(:)=sign(temp(:)).*(max(abs(temp(:))-lambda./prob.diag_M(:), 0)); 
+                  temp = w - tilde_g./prob.diag_M(:);
+                  y(:)=sign(temp(:)).*(max(abs(temp(:))-(lambda)./prob.diag_M(:), 0)); 
               end
           end
       end
@@ -121,21 +128,21 @@ classdef lasso
           block_size = prob.params.M_BLOCK_SIZE;
           block_num = ceil(prob.p/block_size);
           m = cell(block_num,1);
+          square_b = spdiags(prob.data.b.^2,0,prob.n,prob.n);
           for i = 1:block_num
               block_start = 1+(i-1)*block_size;
               block_end = min(prob.p, i*block_size);
-              [m{i}]= prob.data.A(:,block_start:block_end)'*prob.data.A(:,block_start:block_end)/prob.n;
+              [m{i}]= prob.data.A(:,block_start:block_end)'* square_b * prob.data.A(:,block_start:block_end)/(4*prob.n);
           end
-          prob.M=prob.params.SCALE * blkdiag(m{:}) + prob.params.EPS*prob.params.L*speye(prob.p);
-          if(block_size==1)
+          prob.M = prob.params.SCALE * blkdiag(m{:}) + prob.params.EPS*prob.params.L*speye(prob.p);
+          if(block_size == 1)
               prob.diag_M = diag(prob.M);
           end
-         
       end
       
       % sub-optimality
       function error = checkError(prob, x)
-          error = .5/prob.n * norm(prob.data.A*x-prob.data.b)^2 + prob.params.RIDGE/2*norm(x)^2 + prob.params.LAMBDA * norm(x,1)-prob.min_value;
+          error = 1/prob.n * norm(log(1+exp(-prob.data.b.*(prob.data.A*x))),1) + prob.params.RIDGE/2*norm(x)^2 + prob.params.LAMBDA * norm(x,1)-prob.min_value;
       end
    end
 end

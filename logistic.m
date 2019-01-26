@@ -1,9 +1,7 @@
-%% <<-- CODE ARCHIVE -->>
-%% Project name: Inexact Preconditioning on Prox-SVRG and Katyusha 
-%% Coded by:     Fei Feng 
-%% Last update:  01/07/2019
-%% Content:      test example -- L1 logistic
-%% Details:      min_x (1/n) \sum log(1+exp(-bi*ai^Tx))+\lambda \|x\|_1
+%% <<-- Archive -->>
+%% Project: Acceleration of SVRG and Katyusha X by Inexact Preconditioning
+%% Coded by: Fei Feng
+%% Last update: 01/24/2019
 
 classdef logistic
    properties
@@ -32,7 +30,7 @@ classdef logistic
           % full gradient
           if(batch_size == prob.n)
               temp = exp(prob.data.A*x.*(-prob.data.b));
-              g = prob.data.A'*(temp.*(-prob.data.b)./(1+temp))/batch_size + prob.params.RIDGE*x;
+              g = prob.data.A'*(temp.*(-prob.data.b)./(1+temp))/batch_size + 2*prob.params.LAMBDA2*x;
           % mini-batched gradient
           else
               y = randsample(prob.n, batch_size);
@@ -40,7 +38,7 @@ classdef logistic
               sub_b(:) = prob.data.b(y);
               sub_b = sub_b';
               temp = exp(sub_A*x.*(-sub_b));
-              g = sub_A'*(temp.*(-sub_b)./(1+temp))/batch_size + prob.params.RIDGE*x;
+              g = sub_A'*(temp.*(-sub_b)./(1+temp))/batch_size + 2*prob.params.LAMBDA2*x;
           end
       end
       
@@ -49,7 +47,7 @@ classdef logistic
           if(batch_size == prob.n)
               temp1 = exp(prob.data.A*w.*(-prob.data.b));
               temp2 = exp(prob.data.A*x.*(-prob.data.b));
-              g = prob.data.A'*(temp1.*(-prob.data.b)./(1+temp1)-temp2.*(-prob.data.b)./(1+temp2))/batch_size + prob.params.RIDGE*(w-x);
+              g = prob.data.A'*(temp1.*(-prob.data.b)./(1+temp1)-temp2.*(-prob.data.b)./(1+temp2))/batch_size + 2*prob.params.LAMBDA2*(w-x);
           else
               % randomly select #batch_size numbers from [n]
               y = randsample(prob.n,batch_size);
@@ -58,7 +56,7 @@ classdef logistic
               sub_b = sub_b';
               temp1 = exp(sub_A*w.*(-sub_b));
               temp2 = exp(sub_A*x.*(-sub_b));
-              g = sub_A'*(temp1.*(-sub_b)./(1+temp1)-temp2.*(-sub_b)./(1+temp2))/batch_size + prob.params.RIDGE*(w-x);
+              g = sub_A'*(temp1.*(-sub_b)./(1+temp1)-temp2.*(-sub_b)./(1+temp2))/batch_size + 2*prob.params.LAMBDA2*(w-x);
           end
       end
       
@@ -67,14 +65,14 @@ classdef logistic
           % set initial point as w
           y = w;       
           gamma = prob.params.GAMMA;
-          lambda = prob.params.LAMBDA;
+          lambda1 = prob.params.LAMBDA1;
           eta = prob.params.ETA;
           % no preconditioner
           if(prob.params.PRECDN == 0)
               % gradient descent
-              x=w-gamma*tilde_g;
+              x=w-eta*tilde_g;
               % proximal L1
-              y(:)=sign(x(:)).*(max(abs(x(:))-gamma*lambda, 0));             
+              y(:)=sign(x(:)).*(max(abs(x(:))-eta*lambda1, 0));             
           % preconditioner with BCD
           elseif(prob.params.FISTA == 0)
               block_size =  prob.params.BCD_SIZE;
@@ -90,14 +88,14 @@ classdef logistic
                       % gradient descent
                       if(prob.params.BUILD == 0)
                           sub_A = prob.data.A(:, block_start:block_end);
-                          temp = y_block - eta * (1/prob.n * sub_A' * (sub_A * (y_block-w_block))+tilde_g_block);
+                          temp = y_block - gamma * (1/(prob.n*eta) * sub_A' * (sub_A * (y_block-w_block))+tilde_g_block);
                       else
                           sub_M = prob.M(block_start:block_end, block_start:block_end);
-                          temp = y_block - eta * (sub_M * (y_block-w_block)+tilde_g_block);
+                          temp = y_block - gamma * (sub_M/eta * (y_block-w_block)+tilde_g_block);
                       end
                       % proximal L1
                       for j = block_start:block_end
-                          y(j) = sign(temp(j-block_start+1))*max(abs(temp(j-block_start+1))-eta*lambda, 0);
+                          y(j) = sign(temp(j-block_start+1))*max(abs(temp(j-block_start+1))-gamma*lambda1, 0);
                       end
                   end
               end
@@ -109,16 +107,16 @@ classdef logistic
                   t_old = 1;
                   x_old = w;
                   for iter = 1:prob.params.MAX_SUB_ITER
-                      temp = y - eta * (prob.M * (y-w)+tilde_g);
-                      x_new(:)=sign(temp(:)).*(max(abs(temp(:))-eta*lambda, 0)); 
+                      temp = y - gamma * (prob.M * (y-w)+tilde_g);
+                      x_new(:)=sign(temp(:)).*(max(abs(temp(:))-gamma*lambda1, 0)); 
                       t_new = (1+sqrt(1+4*t_old^2))/2;
                       y = x_new' + (t_old-1)/t_new*(x_new'-x_old);
                       x_old = x_new';
                       t_old = t_new;
                   end
               else
-                  temp = w - tilde_g./prob.diag_M(:);
-                  y(:)=sign(temp(:)).*(max(abs(temp(:))-(lambda)./prob.diag_M(:), 0)); 
+                  temp = w - eta* tilde_g./prob.diag_M(:);
+                  y(:)=sign(temp(:)).*(max(abs(temp(:))-eta*lambda1./prob.diag_M(:), 0)); 
               end
           end
       end
@@ -134,7 +132,7 @@ classdef logistic
               block_end = min(prob.p, i*block_size);
               [m{i}]= prob.data.A(:,block_start:block_end)'* square_b * prob.data.A(:,block_start:block_end)/(4*prob.n);
           end
-          prob.M = prob.params.SCALE * blkdiag(m{:}) + prob.params.EPS*prob.params.L*speye(prob.p);
+          prob.M = blkdiag(m{:}) + prob.params.ALPHA * speye(prob.p);
           if(block_size == 1)
               prob.diag_M = diag(prob.M);
           end
@@ -142,7 +140,7 @@ classdef logistic
       
       % sub-optimality
       function error = checkError(prob, x)
-          error = 1/prob.n * norm(log(1+exp(-prob.data.b.*(prob.data.A*x))),1) + prob.params.RIDGE/2*norm(x)^2 + prob.params.LAMBDA * norm(x,1)-prob.min_value;
+          error = 1/prob.n * norm(log(1+exp(-prob.data.b.*(prob.data.A*x))),1) + prob.params.LAMBDA1 * norm(x,1)+prob.params.LAMBDA2*norm(x)^2 - prob.min_value;
       end
    end
 end

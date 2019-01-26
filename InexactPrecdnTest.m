@@ -1,41 +1,37 @@
-%% <<-- ARCHIVE -->>
-%% Project name: Inexact Preconditioning on Prox-SVRG and Katyusha 
-%% Coded by:     Fei Feng 
-%% Last update:  01/07/2019
-%% Content:      main algorithms
-%% Details:      Prox-SVRG/Katyusha
+%% <<-- Archive -->>
+%% Project: Acceleration of SVRG and Katyusha X by Inexact Preconditioning
+%% Coded by: Fei Feng
+%% Last update: 01/24/2019
 
 function InexactPrecdnTest(data)
 %% Regulator Parameters
-params.LAMBDA = 1e-4;           % penalty parameter
-params.RIDGE = 1e-6;            % ridge regression parameter
+params.LAMBDA1 = 1e-3;          % l1-regularization parameter
+params.LAMBDA2 = 0;             % l2-regularization parameter
 %% Algorithm Parameters
 params.VERBOSE = 1;             % choose 1 to print details
-params.MAX_EPOCH = 100000;      % max number of outer loop in SVRG
+params.MAX_EPOCH = 100000000;   % max number of outer loop in SVRG
 params.MAX_ITER = 100;          % max number of inner loop in SVRG
-params.CHECK_STEP = 100;        % number of iterations to check
+params.CHECK_STEP = 200;        % number of iterations to check
 params.TOL = 1e-10;             % accuracy tolerance
 params.BATCH_SIZE = 1;          % batch-size for stochastic gradient
-params.KATYUSHA = 0;            % choose 1 to run Katyusha, else Prox-SVRG
-params.TAU = 0.26;               % Katyusha-X: momentum weight, tau=0.5 is PSVRG
+params.KATYUSHA = 1;            % choose 1 to run Katyusha, else Prox-SVRG
+params.TAU = 0.45;               % Katyusha-X: momentum weight, tau=0.5 is PSVRG
 %% Stepsize Parameters
-params.L = 9;                  % gradient's Lipshitz for subproblem
-params.GAMMA = 2/params.L;      % proximal parameter
+params.ETA = 0.015;                 % stepsize for SVRG smooth term
 %% Preconditioner Parameters
-params.PRECDN = 0;              % choose 1 to use preconditioner
-params.FISTA = 1;
-params.MAX_SUB_ITER =20;         % max number of subproblem
+params.PRECDN = 1;              % choose 1 to use preconditioner
+params.FISTA = 1;               % choose 1 to use FISTA; 0 to use BCD
+params.MAX_SUB_ITER =20;         % max number of iterations for subproblem
 params.BUILD = 1;               % choose 1 to formulate preconditioner
-params.BCD_SIZE = 1;          % block-size for BCD
+params.BCD_SIZE = 1;            % block-size for BCD
 params.M_BLOCK_SIZE = 1;        % block-size for preconditioner
-params.ETA = 1E-1;              % stepsize for subproblem
-params.EPS = 0.3;           % preconditioner = \epsilon*L + 1/n*\approx A^TA, 0.5 is equivalent to no preconditioner.
-params.SCALE = 50;
+params.GAMMA = 0;            % stepsize for subproblem
+params.ALPHA = 15;            % preconditioner = \alpha I + 1/n~(A^TA)
 %% Problem settings
-prob = lasso(data, params);
+%prob = lasso(data, params);
 %prob = logistic(data, params);
-%prob = pca(data,params);    
-prob.min_value = 0.2549690153;
+prob = pca(data,params);    
+prob.min_value = -0.0983942174;
 x = zeros(prob.p,1);  
 w = zeros(prob.p,1);
 if(params.KATYUSHA)
@@ -44,37 +40,21 @@ if(params.KATYUSHA)
 end
 
 %% Inexact Preconditioner Solver
-fprintf('\nCalling Inexact Preconditioner Solver_MATLAB 12/19/2018\n');
+fprintf('\nCalling Inexact Preconditioner Solver_MATLAB 01/24/2018\n');
 fprintf('-----------------------------------------------\n');
 if(params.VERBOSE)
     fprintf('PRECDN = %d\n', params.PRECDN);
     fprintf('KATYUSHA = %d\n', params.KATYUSHA);
-    fprintf('L = %d\n', params.L);
-    fprintf('EPS = %d\n',params.EPS);
     fprintf('ETA = %d\n', params.ETA);
-    fprintf('SCALE = %d\n', params.SCALE);
+    fprintf('TAU = %d\n', params.TAU);
+    fprintf('GAMMA = %d\n', params.GAMMA);
+    fprintf('ALPHA = %d\n', params.ALPHA);
 end
 fprintf('Time\t,Epoch\t,Error\n');
 tic
 for i = 0:params.MAX_EPOCH
-    % full gradient at x
-    g = grad(prob, x, prob.n);
-    % inner loop
-    for j = 1:params.MAX_ITER
-        % a variance-reduced stochastic gradient
-        tilde_g = g + scGradDiff(prob, w, x, params.BATCH_SIZE);
-        % solve non-smooth part
-        w = blockDiagonalProx(prob, w, tilde_g); 
-    end
-   
-    if(params.KATYUSHA)
-        y_old = y_new;
-        y_new = w;
-        x = (1.5*y_new + 0.5*x - (1-params.TAU)*y_old)/(1+params.TAU);
-    else
-        x = w;
-    end
     
+    % check sub-optimality
     if(mod(i,params.CHECK_STEP)==0)
         time = toc;
         error = checkError(prob, x);
@@ -84,6 +64,25 @@ for i = 0:params.MAX_EPOCH
         if(abs(error) < params.TOL)
             break;
         end
+        tic
+    end
+    
+    % Nesterov acceleration
+    if(params.KATYUSHA)
+        y_old = y_new;
+        y_new = w;
+        x = (1.5*y_new + 0.5*x - (1-params.TAU)*y_old)/(1+params.TAU);
+    else
+        x = w;
+    end
+    
+    % SVRG 
+    g = grad(prob, x, prob.n);
+    for j = 1:params.MAX_ITER
+        % a variance-reduced stochastic gradient
+        tilde_g = g + scGradDiff(prob, w, x, params.BATCH_SIZE);
+        % solve non-smooth part
+        w = blockDiagonalProx(prob, w, tilde_g); 
     end
 end
 
